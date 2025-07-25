@@ -1,79 +1,68 @@
-# ========================================
-# AI Parking Sign Reader – FastAPI backend för Render
-# ========================================
-
-from fastapi import FastAPI, File, UploadFile
+import gc
 import easyocr
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+import uvicorn
+import io
+from PIL import Image
+import base64
 from openai import OpenAI
-import datetime
-import os
 
-# ✅ Byt ut mot din riktiga API-nyckel innan du deployar
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "DIN_API_NYCKEL_HÄR")
-
-# Initiera klienter
-client = OpenAI(api_key=OPENAI_API_KEY)
-reader = easyocr.Reader(['sv', 'en'])
-
-# Skapa FastAPI-app
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"status": "Backend is running!"}
+reader = None  # Lazy-load
+
+# GPT-klienten
+client = OpenAI()
+
+def init_reader():
+    global reader
+    if reader is None:
+        reader = easyocr.Reader(['en'], gpu=False)
 
 @app.post("/analyze")
-async def analyze_parking_sign(image: UploadFile = File(...)):
-    # 1. Spara bilden temporärt
-    temp_filename = f"temp_{image.filename}"
-    with open(temp_filename, "wb") as f:
-        f.write(await image.read())
+async def analyze(file: UploadFile = File(...)):
+    global reader
+    try:
+        # Lazy-load OCR
+        init_reader()
 
-    # 2. OCR
-    ocr_results = reader.readtext(temp_filename, detail=0)
-    ocr_text = " ".join(ocr_results)
+        # Läs bilden
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
+        result = reader.readtext(image_bytes, detail=0)
 
-    # 3. Nuvarande tid & dag
-    now = datetime.datetime.now()
-    current_time = now.strftime("%H:%M")
-    current_day = now.strftime("%A")
+        # GPT-regeltolkning
+        gpt_prompt = (
+            "Du är en expert på svenska parkeringsregler. "
+            "Här är texten från en parkeringsskylt: "
+            f"{result}. "
+            "Svara på svenska om man får parkera just nu och fram till när. Var tydlig."
+        )
 
-    # 4. GPT-regeltolkning
-    prompt = f"""
-    Du är en svensk parkeringsregeltolkare.
+        completion = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Du är en hjälpsam assistent."},
+                {"role": "user", "content": gpt_prompt}
+            ]
+        )
 
-    Input (OCR-text från skylten): "{ocr_text}"
-    Nuvarande tid: {current_time}
-    Nuvarande dag: {current_day}
+        answer = completion.choices[0].message.content
 
-    Svara enligt följande format:
+        return JSONResponse(content={"ocr_text": result, "answer": answer})
 
-    1. Börja med ett klart JA/NEJ-svar:
-    - "Du FÅR parkera här just nu."
-    - "Du får INTE parkera här just nu."
+    except Exception as e:
+        return JSONResponse(content={"error": f"Fel vid analys: {str(e)}"})
 
-    2. Lägg till en kort förklaring på en rad:
-    - Om parkering är tillåten: "Du får parkera fram till kl. XX:XX."
-    - Om parkering inte är tillåten: "Du får parkera här först kl. XX:XX."
-    """
+    finally:
+        # Rensa minne efter varje körning
+        reader = None
+        gc.collect()
 
-    completion = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "Du är en expert på svenska parkeringsregler."},
-            {"role": "user", "content": prompt}
-        ]
-    )
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Parkerings-API är igång!"}
 
-    gpt_answer = completion.choices[0].message.content
-
-    # 5. Rensa upp temporär fil
-    os.remove(temp_filename)
-
-    # 6. Returnera svar
-    allowed = "INTE" not in gpt_answer.upper()
-    return {
-        "allowed": allowed,
-        "ocr_text": ocr_text,
-        "gpt_answer": gpt_answer
-    }
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=10000)
