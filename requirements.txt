@@ -4,3 +4,4 @@ easyocr
 torch
 pillow
 openai
+python-multipart
