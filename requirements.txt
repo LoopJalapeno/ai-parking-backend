@@ -1,5 +1,6 @@
 fastapi
 uvicorn
 easyocr
-opencv-python-headless
+torch
+pillow
 openai
