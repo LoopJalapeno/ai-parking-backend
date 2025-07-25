@@ -5,28 +5,19 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import io
 from PIL import Image
-import base64
 from openai import OpenAI
 
 app = FastAPI()
 
-reader = None  # Lazy-load
+# 🔹 OCR Reader laddas EN gång, med optimerade inställningar
+reader = easyocr.Reader(['en'], gpu=False, detector=False, verbose=False)
 
 # GPT-klienten
 client = OpenAI()
 
-def init_reader():
-    global reader
-    if reader is None:
-        reader = easyocr.Reader(['en'], gpu=False)
-
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
-    global reader
     try:
-        # Lazy-load OCR
-        init_reader()
-
         # Läs bilden
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes))
@@ -49,15 +40,13 @@ async def analyze(file: UploadFile = File(...)):
         )
 
         answer = completion.choices[0].message.content
-
         return JSONResponse(content={"ocr_text": result, "answer": answer})
 
     except Exception as e:
         return JSONResponse(content={"error": f"Fel vid analys: {str(e)}"})
 
     finally:
-        # Rensa minne efter varje körning
-        reader = None
+        # 🔹 Frigör onödigt minne (men inte själva readern)
         gc.collect()
 
 @app.get("/")
