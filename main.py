@@ -1,5 +1,4 @@
 import gc
-import easyocr
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -9,12 +8,13 @@ from openai import OpenAI
 
 app = FastAPI()
 
-reader = None  # 🔹 Laddas först vid första anropet
+reader = None
 client = OpenAI()
 
 def get_reader():
     global reader
     if reader is None:
+        import easyocr  # 🔹 Importeras först vid behov
         reader = easyocr.Reader(['en'], gpu=False, detector=False, verbose=False)
     return reader
 
@@ -23,8 +23,13 @@ async def analyze(file: UploadFile = File(...)):
     try:
         r = get_reader()
         image_bytes = await file.read()
-        _ = Image.open(io.BytesIO(image_bytes))  # Validera bild
-        result = r.readtext(image_bytes, detail=0)
+        _ = Image.open(io.BytesIO(image_bytes))  # Validera att det är en bild
+
+        # 🔹 Försök använda endast igenkänning utan detektering
+        try:
+            result = r.recognize(image_bytes, detail=0)  # vissa versioner stöder detta
+        except AttributeError:
+            result = r.readtext(image_bytes, detail=0)  # fallback
 
         gpt_prompt = (
             "Du är en expert på svenska parkeringsregler. "
