@@ -1,7 +1,7 @@
 fastapi
 uvicorn
-easyocr
-torch
 pillow
 openai
 python-multipart
+paddleocr
+paddlepaddle==2.5.2
