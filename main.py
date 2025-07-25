@@ -9,21 +9,23 @@ from openai import OpenAI
 
 app = FastAPI()
 
-# 🔹 OCR Reader laddas EN gång, med optimerade inställningar
-reader = easyocr.Reader(['en'], gpu=False, detector=False, verbose=False)
-
-# GPT-klienten
+reader = None  # 🔹 Laddas först vid första anropet
 client = OpenAI()
+
+def get_reader():
+    global reader
+    if reader is None:
+        reader = easyocr.Reader(['en'], gpu=False, detector=False, verbose=False)
+    return reader
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
     try:
-        # Läs bilden
+        r = get_reader()
         image_bytes = await file.read()
-        image = Image.open(io.BytesIO(image_bytes))
-        result = reader.readtext(image_bytes, detail=0)
+        _ = Image.open(io.BytesIO(image_bytes))  # Validera bild
+        result = r.readtext(image_bytes, detail=0)
 
-        # GPT-regeltolkning
         gpt_prompt = (
             "Du är en expert på svenska parkeringsregler. "
             "Här är texten från en parkeringsskylt: "
@@ -46,7 +48,6 @@ async def analyze(file: UploadFile = File(...)):
         return JSONResponse(content={"error": f"Fel vid analys: {str(e)}"})
 
     finally:
-        # 🔹 Frigör onödigt minne (men inte själva readern)
         gc.collect()
 
 @app.get("/")
